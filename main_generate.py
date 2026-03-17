@@ -116,7 +116,7 @@ def write_to_sheet(creds: Credentials, content: dict) -> None:
 
     # 確認第一行是標題列，如果是空的就先建立標題
     existing = sheet.get_all_values()
-    if not existing or existing[0][0] != "日期":
+    if not existing or not existing[0] or existing[0][0] != "日期":
         sheet.insert_row(
             ["日期", "趨勢主題", "文案內容", "圖片連結", "Hashtags", "排程時間", "狀態", "發文結果"],
             index=1,
