@@ -1,0 +1,28 @@
+name: Generate Sample Posts
+
+on:
+  workflow_dispatch:  # 只能手動觸發
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - run: pip install anthropic
+
+      - name: 生成 10 篇測試文案
+        run: python generate_samples.py
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+
+      - name: 上傳結果檔案
+        uses: actions/upload-artifact@v4
+        with:
+          name: sample-posts
+          path: sample_posts.txt
