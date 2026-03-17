@@ -1,0 +1,32 @@
+name: Weekly Content Generation
+
+on:
+  schedule:
+    # 每週一 UTC 01:00 = 台灣時間 09:00
+    - cron: '0 1 * * 1'
+  workflow_dispatch:  # 也可以在 GitHub 頁面手動觸發
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 取得程式碼
+        uses: actions/checkout@v4
+
+      - name: 設定 Python 環境
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: 安裝套件
+        run: pip install -r requirements.txt
+
+      - name: 執行內容生成
+        run: python main_generate.py
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GOOGLE_SERVICE_ACCOUNT: ${{ secrets.GOOGLE_SERVICE_ACCOUNT }}
+          GMAIL_ADDRESS: ${{ secrets.GMAIL_ADDRESS }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          SHEET_URL: ${{ secrets.SHEET_URL }}

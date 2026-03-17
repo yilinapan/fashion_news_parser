@@ -1,0 +1,76 @@
+# choir.clo 文案風格範本
+# 請將你的 IG 文案貼在這裡（5-10 篇），格式如下：
+# ── 文案 1 ──
+# A quote left unnamed, echoing in silence.
+一首無名之詩，在寂靜中迴盪；
+於2026 春夏之初，靜謐勾勒細節。
+SS26 "Silence Quote" 全新系列現已上市。
+#
+# ── 文案 2 ──
+# SS26 "Silence Quote"
+尋找安定的外著，
+在城市之中，享受沒有目的地的片刻。
+全新單品皆已於門市及官網上架
+#
+#  ── 文案 3 ──
+#SS26 "Silence Quote"
+2026 春夏系列首波發售，重新詮釋日常。
+從設計款外著到細節突出的基本款，為日常穿著帶來新的層次。
+全新系列現已上市，
+官網今日登場，中山IA13門市將陸續到貨，新春活動優惠同步進行中！
+#
+#  ── 文案 4 ──
+#SS26 Collection, Entry I - "Silence Quote"
+以沈默作為引言，
+沒有目的地，也不急著前進，低聲展開一段日常紀錄。
+2026 春夏全新系列，2/11 官網與門市同步上架。
+#
+# ── 文案 5 ──
+#Spring / Summer 2026 Collection "Silence Quote"
+一切從安靜的流動開始。
+2026 春夏全新系列，2/11 官網與門市同步上架。
+#
+# ── 文案 6 ──
+#Sneak peeking our latest collection.
+Spring / Summer 2026.
+Following our first Paris showroom, coming soon at choirclo.com & in-store.
+帶你一窺 2026 春夏系列 J
+首度於巴黎正式發表設計師全新系列作品，將於今年春季陸續於官網與門市上架，敬請期待。
+#
+# ── 文案 7 ──
+#街頭漫步、旅遊的片刻，或是享受商務行程結束後的傍晚，CHOIR 都能陪伴你的穿搭選擇。
+Through Tokyo streets, with CHOIR.
+#
+# ── 文案 8 ──
+#新年快樂
+新的一年，CHOIR 也持續譜出包容各式風格的樂章。
+中山的街邊店，期待陪伴大家走進日常。
+無論是想探索不同風格、為生活留下一段喘息的時間，
+或只是想走進空間，感受當下的氛圍，都歡迎來中山店走走。
+喝杯咖啡、逛逛新品，
+順著當下的節奏，享用一份甜品。
+期待2026，持續產生新的共鳴，CHOIR 中山店歡迎你們的到來。
+#
+#── 文案 9 ──
+#Clean linework shapes how the body moves and responds.
+CHOIR 女裝的首次登場。
+品牌語言，
+在女性形體中被折射與回應。
+Echo and Being Echoed.
+#
+#── 文案 10 ──
+#Worn as it is.
+CHOIR 女裝以自然廓形，回應每個人獨特的身體旋律，延續品牌的設計語言。
+#
+#── 文案 11 ──
+#SS26 CHOIR 女裝系列首次發表
+"Refracted Form"
+以男裝輪廓為基礎，
+折射出更貼近日常的女性線條。
+從生活出發的簡約輪廓，在穿著之中，留下自在與質感。
+CHOIR 以更貼近身體自然廓形的方式，開啟女裝的第一個篇章。
+Now available at choirclo.com & 全實體門市！
+#
+#── 文案 12 ──
+#推開混頓的瞬間，在流動之外，找到自己的寧靜；
+在移動之中，重新校準自我
