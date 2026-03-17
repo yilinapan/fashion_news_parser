@@ -104,7 +104,15 @@ def generate_content(articles_summary: str) -> dict:
 def write_to_sheet(creds: Credentials, content: dict) -> None:
     """將生成的文案寫入 Google Sheet 的第一個工作表。"""
     gc = gspread.authorize(creds)
-    sheet = gc.open(SHEET_NAME).sheet1
+
+    # 優先用 SHEET_URL 的 ID 開啟（更可靠），找不到才用名稱
+    sheet_url = os.environ.get("SHEET_URL", "")
+    if sheet_url and "/d/" in sheet_url:
+        sheet_id = sheet_url.split("/d/")[1].split("/")[0]
+        spreadsheet = gc.open_by_key(sheet_id)
+    else:
+        spreadsheet = gc.open(SHEET_NAME)
+    sheet = spreadsheet.sheet1
 
     # 確認第一行是標題列，如果是空的就先建立標題
     existing = sheet.get_all_values()
