@@ -33,11 +33,21 @@ def get_google_creds() -> Credentials:
     return Credentials.from_service_account_info(service_account_info, scopes=SCOPES)
 
 
-# ── Claude 生成文案 ───────────────────────────────────────────
-def generate_content(articles_summary: str) -> dict:
-    """呼叫 Claude API，根據本週趨勢文章生成 IG 文案。"""
+# ── 共用：解析 JSON helper ────────────────────────────────────
+def _parse_json(raw: str) -> dict:
+    raw = raw.strip()
+    if raw.startswith("```"):
+        raw = raw.split("```")[1]
+        if raw.startswith("json"):
+            raw = raw[4:]
+        raw = raw.strip()
+    return json.loads(raw)
 
-    # 讀取風格範本
+
+# ── Step 1：生成文案草稿 ──────────────────────────────────────
+def generate_content(articles_summary: str) -> dict:
+    """呼叫 Claude API，根據本週趨勢文章生成 IG 文案草稿。"""
+
     style_guide = ""
     style_guide_path = os.path.join(os.path.dirname(__file__), "style_guide.txt")
     if os.path.exists(style_guide_path):
@@ -45,97 +55,95 @@ def generate_content(articles_summary: str) -> dict:
             style_guide = f.read().strip()
 
     style_section = (
-        f"\n以下是參考的文案風格範本，請模仿這個語氣與節奏：\n{style_guide}"
-        if style_guide
-        else ""
+        f"\n以下是一個品牌帳號的文案，只參考它的短句節奏和中英混搭方式：\n{style_guide}"
+        if style_guide else ""
     )
 
-    client = anthropic.Anthropic()  # 自動讀取 ANTHROPIC_API_KEY
+    client = anthropic.Anthropic()
 
     message = client.messages.create(
         model="claude-sonnet-4-6",
         max_tokens=2000,
-        system=f"""你是一個台灣時尚趨勢 IG 帳號的文案編輯。這個帳號的定位是時尚媒體，不是品牌帳號，不賣衣服、不推銷產品。
+        system=f"""你是一個台灣時尚趨勢 IG 帳號的文案編輯，定位是時尚媒體，不賣衣服、不推銷產品。
 
-【文案結構】（三段，總長約 100-150 字）
+【文案結構】三段，總長約 100-150 字：
 
-第一段（1-2 句）：帶入趨勢的切入點。從以下三種開頭方式中隨機選擇：
-  (A) 一句英文短句
-  (B) 一個具體的畫面或場景（例如某個城市街頭看到的東西）
-  (C) 直接切入觀察，沒有引言
+第一段（1-2 句）：切入趨勢。每次用不同的方式進入，例如一句英文、一個具體場景描述、或直接說觀察。
 
-第二段（3-5 句）：說明趨勢是什麼、為什麼值得注意。語氣像在跟朋友聊天，不像在寫報告。描述趨勢來源時要具體——提到城市名、品牌名、秀場名或具體的街拍場景，不要用「歐洲街頭」「日系帳號」這種模糊說法。
+第二段（3-5 句）：說明趨勢是什麼、為什麼值得注意。語氣像在跟朋友聊天。要具體，提到品牌名、城市名、秀場名，不要用「歐洲街頭」這種模糊說法。
 
-第三段（1 句）：收尾。從以下方式中隨機選擇：
-  (A) 一個簡短的個人觀察
-  (B) 一句很平的陳述，不帶哲理感
-  (C) 一個沒有答案的問句
-  不要每篇都是金句型收尾。有些收尾就是很普通的一句話，那樣反而自然。
+第三段（1 句）：收尾。可以是一個平淡的觀察、一句陳述、或一個問句，不需要每次都是金句。
 
-【語氣規則】
-- 中英文自然混搭，英文比例約 20-30%，通常用在開頭句或關鍵詞
-- 用台灣口語，像是在跟認識的人講話
-- 不矯情、不說教、不商業
-- 短句為主，不要長串的排比句
-- 偶爾一篇可以語氣比較鬆散隨便，像編輯趕稿時寫的，不用每篇都維持同一個質感水準
+【語氣】
+- 中英文混搭，英文約 20-30%，通常在開頭句或關鍵詞
+- 台灣口語，自然平淡，像在跟認識的人說話
+- 短句為主
+- 版型描述用「打得很寬鬆」，台灣說「打版」而不是「給版」
+- 單字詞要補完整：「顏色」不說「色」、「寬鬆」不說「鬆」、「沉穩」不說「沉」
 
-【用詞口語化規則——非常重要】
-AI 很容易寫出「文學壓縮」的單字詞，聽起來像在寫散文。台灣人日常打字會用完整的雙字詞或口語說法。請嚴格遵守以下替換：
-- 「色」→「顏色」（例如「這三個色」→「這三個顏色」）
-- 「沉」→「沉穩」或「沉靜」（不要單獨用「很沉」來形容視覺）
-- 「鬆」→「寬鬆」（例如「給得鬆」→「給得很寬鬆」）
-- 「撐」→「撐場面」或「撐起來」（例如「在撐」→「在撐場面」）
-- 「壓」→「用」或「放」（例如「壓了大量」→「用了大量」或「放了很多」）
-- 「走」當作趨勢動詞時 →「往…方向走」或改寫（不要寫「直接往大一號走」這種壓縮句）
-- 「帶」→「帶出」「帶入」要寫完整
-- 「落」→「落在」「垂落」要寫完整，不要單獨用「落下來」
-通用原則：如果一個字拿掉後句子會變得像詩或像散文標題，就改成日常口語的雙字詞版本。寫完後自查：「這句話唸出來像不像在跟朋友講話？」如果像在朗讀，就要改。
-
-【禁用詞彙與句型——嚴格遵守】
-- 「就好」「不用...太多」「慢慢」「其實很簡單」「值得擁有」「快去」「不容錯過」
-- 「探索」「邂逅」「獨特」「打造」「賦予」「綻放」
-- 「不僅…更…」「無論是…還是…」等排比句式
-- 「不是 A，是 B」這種否定再肯定的結構——一篇最多出現一次
-- 「反而」——每篇最多出現一次
-- 「有一種 _____ 的感覺」——盡量避免
-- 「開始 _____ 了」——盡量避免
-- 「層次不會很厚重」——直接禁用，永遠不要出現
-
-【Hashtag 規則】
-- 8-12 個 hashtag
-- 中英文混搭
-- 固定標籤：#台灣時尚 #FashionTaiwan（二選一，不要兩個都放）
-- 其餘根據該篇主題自然搭配
+【Hashtag】8-12 個，中英混搭，#台灣時尚 或 #FashionTaiwan 擇一放。
 {style_section}
 
-請以 JSON 格式輸出，只輸出 JSON，不要有其他文字，格式如下：
+請以 JSON 格式輸出，只輸出 JSON：
 {{
   "topic": "本週趨勢主題（10字以內）",
   "caption": "完整 IG 文案（含 hashtag，hashtag 放在文案最後）",
   "image_prompt": "英文 AI 繪圖提示詞，描述一張時尚編輯風格的圖片，1080x1350px，4:5 直式",
-  "hashtags": ["hashtag1", "hashtag2", "...（8-12個，英中混合）"]
+  "hashtags": ["hashtag1", "hashtag2"]
 }}""",
-        messages=[
-            {
-                "role": "user",
-                "content": (
-                    f"以下是本週爬取到的時尚趨勢文章摘要：\n\n{articles_summary}\n\n"
-                    "請根據以上資訊，撰寫一篇符合上述風格的 IG 文案。"
-                ),
-            }
-        ],
+        messages=[{
+            "role": "user",
+            "content": (
+                f"以下是本週爬取到的時尚趨勢文章摘要：\n\n{articles_summary}\n\n"
+                "請根據以上資訊，撰寫一篇符合上述風格的 IG 文案。"
+            ),
+        }],
     )
 
-    raw = message.content[0].text.strip()
+    return _parse_json(message.content[0].text)
 
-    # 有時 Claude 會在 JSON 外包一層 ```json ... ```，這裡處理掉
-    if raw.startswith("```"):
-        raw = raw.split("```")[1]
-        if raw.startswith("json"):
-            raw = raw[4:]
-        raw = raw.strip()
 
-    return json.loads(raw)
+# ── Step 2：校對修正 ──────────────────────────────────────────
+def revise_caption(client: anthropic.Anthropic, content: dict) -> dict:
+    """針對草稿做定點修正，專門處理最頑固的幾個 AI 句式問題。"""
+
+    caption = content.get("caption", "")
+
+    message = client.messages.create(
+        model="claude-haiku-4-5-20251001",
+        max_tokens=1500,
+        system="""你是文案校對，負責找出並修正 IG 貼文裡的特定問題。只改有問題的地方，其他句子不動，語意保持不變。
+
+依序檢查並修正以下六項：
+
+1. 破折號（——）→ 改成逗號或句號，視語意決定
+
+2. 「不是A，是B」「A而是B」「不是A而是B」「比較像A不像B」「還是A只是B」這類否定再肯定句型
+   → 直接說B就好，刪掉前面否定A的部分
+   例：「不是刻意露，是那種剛好透出來的感覺」→「就是那種剛好透出來的感覺」
+
+3. 「在＋單字動詞」（在走、在退、在跟、在管、在撐、在做）
+   → 補完整或換說法
+   例：「慢慢在退」→「慢慢退流行了」；「更多人在做的是」→「更多人選擇的是」
+
+4. 「版型給得」→「版型打得」
+
+5. 「台灣這邊」→「台灣」
+
+6. 說教語氣（例如「穿的人比以前更清楚自己在做什麼選擇」、「別再收著等特殊場合了」）
+   → 刪掉或改成平述句
+
+回傳完整 JSON，只改 caption 欄位，其他欄位原封不動。""",
+        messages=[{
+            "role": "user",
+            "content": f"請校對以下 IG 文案：\n\n{json.dumps(content, ensure_ascii=False, indent=2)}"
+        }],
+    )
+
+    revised = _parse_json(message.content[0].text)
+    # 保留原始非 caption 欄位，只更新 caption
+    content["caption"] = revised.get("caption", caption)
+    return content
 
 
 # ── 寫入 Google Sheet ────────────────────────────────────────
@@ -214,9 +222,12 @@ def main():
         print("⚠️  本週未抓到任何文章，流程終止。")
         return
 
-    # 2. Claude 生成文案
+    # 2. Claude 生成文案（兩步驟：生成草稿 → 校對修正）
     print("\n✍️  步驟 2：呼叫 Claude 生成文案...")
+    client = anthropic.Anthropic()
     content = generate_content(articles_summary)
+    print("   草稿完成，進行校對修正...")
+    content = revise_caption(client, content)
     print(f"   主題：{content.get('topic', '')}")
     print(f"   文案預覽：{content.get('caption', '')[:100]}...")
 
