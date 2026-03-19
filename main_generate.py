@@ -1,7 +1,8 @@
 """
 main_generate.py
 主程式：每週執行一次
-流程：爬取時尚新聞 → Claude 生成文案 → 寫入 Google Sheet → Gmail 通知
+流程：爬取時尚新聞 → Claude 生成 3 個切入點 → AI 選最自然的＋口語化改寫 → 輕量校對
+     → Gemini 生圖 → 寫入 Google Sheet → Gmail 通知
 """
 
 import os
@@ -130,58 +131,97 @@ def _parse_json(raw: str) -> dict:
     return json.loads(raw)
 
 
-# ── Step 1：生成文案草稿 ──────────────────────────────────────
-def generate_content(articles_summary: str) -> dict:
-    """呼叫 Claude API，根據本週趨勢文章生成 IG 文案草稿。"""
+# ── 載入風格檔案 ─────────────────────────────────────────────
+def _load_file(filename: str) -> str:
+    path = os.path.join(os.path.dirname(__file__), filename)
+    if os.path.exists(path):
+        with open(path, "r", encoding="utf-8") as f:
+            return f.read().strip()
+    return ""
 
-    style_guide = ""
-    style_guide_path = os.path.join(os.path.dirname(__file__), "style_guide.txt")
-    if os.path.exists(style_guide_path):
-        with open(style_guide_path, "r", encoding="utf-8") as f:
-            style_guide = f.read().strip()
 
-    style_section = (
-        f"\n以下是一個品牌帳號的文案，只參考它的短句節奏和中英混搭方式：\n{style_guide}"
-        if style_guide else ""
-    )
+# ── 人設與核心 System Prompt ─────────────────────────────────
+PERSONA_PROMPT = """你是一個在時尚產業混了很多年的編輯，現在經營一個台灣的時尚趨勢 IG 帳號。你看秀、逛街拍、跑 showroom，對趨勢有自己的觀點但不會強迫別人接受。你的讀者是 20-35 歲、對穿搭有想法的人，你跟他們的關係像是在同一個群組裡會聊穿搭的朋友。
+
+你寫文案的時候像在錄語音訊息給朋友，不像在寫文章。你會用小學五年級就能聽懂的日常對話方式說話。你不賣東西、不推銷、不說教。"""
+
+
+STYLE_RULES = """【寫法】
+- 中英文自然混搭，英文大概佔 20-30%，通常放在開頭句或關鍵詞
+- 短句為主，多用句號、少用逗號
+- 每句之間換行，方便手機閱讀
+- 要具體：提品牌名、城市名、秀場名，不要寫「歐洲街頭」「各大品牌」這種模糊說法
+- 台灣口語：「打版」不說「給版」、「顏色」不說「色」、「寬鬆」不說「鬆」
+- Emoji 只能放在行末，每段最多兩個，不要塞在句子中間
+
+【三段結構，總長 100-150 字】
+第一段（Hook，1-2 句）：用一個會讓人想繼續讀的開頭切入。
+第二段（3-5 句）：趨勢是什麼、為什麼值得注意。語氣像聊天。
+第三段（1 句）：收尾。平淡的觀察、陳述、或問句都好，不用每次都是金句。
+
+【Hashtag】8-12 個，中英混搭，#台灣時尚 或 #FashionTaiwan 擇一。"""
+
+
+# ── Step 1：生成 3 個不同切入點的草稿 ────────────────────────
+def generate_three_drafts(articles_summary: str) -> list:
+    """呼叫 Claude API，根據本週趨勢文章生成 3 個不同切入點的 IG 文案草稿。"""
+
+    style_guide = _load_file("style_guide.txt")
+    fewshot_examples = _load_file("fewshot_examples.txt")
+
+    fewshot_section = ""
+    if fewshot_examples:
+        fewshot_section = f"""
+
+【風格範例——以下是長篇時尚文章，請只分析它們的「語氣、用詞、中英混搭方式」來模仿，不要模仿它們的長度和結構，你的 IG 文案仍然要維持 100-150 字短文】
+{fewshot_examples}"""
+
+    style_ref = ""
+    if style_guide:
+        style_ref = f"""
+
+【參考節奏】以下品牌帳號的短句節奏和中英混搭方式可以參考（但你的定位是媒體不是品牌，不要模仿它的產品推廣語氣）：
+{style_guide}"""
 
     client = anthropic.Anthropic()
 
     message = client.messages.create(
         model="claude-sonnet-4-6",
-        max_tokens=2000,
-        system=f"""你是一個台灣時尚趨勢 IG 帳號的文案編輯，定位是時尚媒體，不賣衣服、不推銷產品。
+        max_tokens=4000,
+        system=f"""{PERSONA_PROMPT}
 
-【文案結構】三段，總長約 100-150 字：
+{STYLE_RULES}
+{fewshot_section}
+{style_ref}
 
-第一段（1-2 句）：切入趨勢。每次用不同的方式進入，例如一句英文、一個具體場景描述、或直接說觀察。
-
-第二段（3-5 句）：說明趨勢是什麼、為什麼值得注意。語氣像在跟朋友聊天。要具體，提到品牌名、城市名、秀場名，不要用「歐洲街頭」這種模糊說法。
-
-第三段（1 句）：收尾。可以是一個平淡的觀察、一句陳述、或一個問句，不需要每次都是金句。
-
-【語氣】
-- 中英文混搭，英文約 20-30%，通常在開頭句或關鍵詞
-- 台灣口語，自然平淡，像在跟認識的人說話
-- 短句為主
-- 版型描述用「打得很寬鬆」，台灣說「打版」而不是「給版」
-- 單字詞要補完整：「顏色」不說「色」、「寬鬆」不說「鬆」、「沉穩」不說「沉」、「放鬆/寬鬆」不說「放」（例如「特別放」→「版型特別寬鬆」）
-
-【Hashtag】8-12 個，中英混搭，#台灣時尚 或 #FashionTaiwan 擇一放。
-{style_section}
-
-請以 JSON 格式輸出，只輸出 JSON：
+請以 JSON 格式輸出，只輸出 JSON，不要有其他文字：
 {{
   "topic": "本週趨勢主題（10字以內）",
-  "caption": "完整 IG 文案（含 hashtag，hashtag 放在文案最後）",
-  "image_prompt": "英文 AI 繪圖提示詞，描述一張時尚編輯風格的圖片，1080x1350px，4:5 直式",
-  "hashtags": ["hashtag1", "hashtag2"]
+  "drafts": [
+    {{
+      "angle": "切入點 A 的簡述",
+      "caption": "完整文案（含 hashtag）",
+      "image_prompt": "英文 AI 繪圖提示詞，時尚編輯風格，1080x1350px，4:5 直式"
+    }},
+    {{
+      "angle": "切入點 B 的簡述",
+      "caption": "完整文案（含 hashtag）",
+      "image_prompt": "英文 AI 繪圖提示詞"
+    }},
+    {{
+      "angle": "切入點 C 的簡述",
+      "caption": "完整文案（含 hashtag）",
+      "image_prompt": "英文 AI 繪圖提示詞"
+    }}
+  ],
+  "hashtags": ["所有版本共用的 hashtag 列表"]
 }}""",
         messages=[{
             "role": "user",
             "content": (
                 f"以下是本週爬取到的時尚趨勢文章摘要：\n\n{articles_summary}\n\n"
-                "請根據以上資訊，撰寫一篇符合上述風格的 IG 文案。"
+                "請從 3 個完全不同的切入角度，各寫一篇 IG 文案。"
+                "3 篇的開頭方式、敘事角度、收尾方式都要不一樣。"
             ),
         }],
     )
@@ -189,46 +229,78 @@ def generate_content(articles_summary: str) -> dict:
     return _parse_json(message.content[0].text)
 
 
-# ── Step 2：校對修正 ──────────────────────────────────────────
-def revise_caption(client: anthropic.Anthropic, content: dict) -> dict:
-    """針對草稿做定點修正，專門處理最頑固的幾個 AI 句式問題。"""
+# ── Step 2：AI 自動選最自然的版本 + 口語化改寫 ────────────────
+def select_and_rewrite(drafts_data: dict) -> dict:
+    """讓 AI 從 3 個草稿中選出最不像 AI 寫的，然後用口語化方式重寫一遍。"""
+
+    client = anthropic.Anthropic()
+
+    drafts_text = ""
+    for i, d in enumerate(drafts_data["drafts"], 1):
+        drafts_text += f"\n【版本 {i}】切入點：{d['angle']}\n{d['caption']}\n"
+
+    message = client.messages.create(
+        model="claude-sonnet-4-6",
+        max_tokens=2000,
+        system=f"""{PERSONA_PROMPT}
+
+你現在要做兩件事：
+
+1. 從以下 3 個版本中，選出「最不像 AI 寫的、最像真人在 IG 上會發的」那一個。
+   判斷標準：讀起來像在跟朋友講話、沒有行銷口號感、沒有排比句、沒有刻意的轉折。
+
+2. 選好之後，把它「口語化」——想像你在錄語音訊息傳給朋友，把那些裝腔作勢的轉折詞都拿掉，重新順一遍。
+   具體來說：
+   - 破折號（——）改成逗號或句號
+   - 「不是 A，是 B」這種句式，直接說 B
+   - 太文學的壓縮詞換成日常口語（「色」→「顏色」、「鬆」→「寬鬆」）
+   - 刪掉贅字：「其實」「本身」「台灣這邊」→「台灣」
+   - 每句之間換行
+   - 讀起來像人在打字，不像在寫散文
+
+請以 JSON 格式輸出，只輸出 JSON：
+{{
+  "selected_version": 1,
+  "reason": "選這個版本的原因（一句話）",
+  "topic": "{drafts_data.get('topic', '')}",
+  "caption": "口語化改寫後的完整文案（含 hashtag）",
+  "image_prompt": "沿用所選版本的繪圖提示詞",
+  "hashtags": ["hashtag 列表"]
+}}""",
+        messages=[{
+            "role": "user",
+            "content": f"以下是同一個趨勢主題的 3 個版本，請選出最好的並口語化改寫：\n{drafts_text}"
+        }],
+    )
+
+    return _parse_json(message.content[0].text)
+
+
+# ── Step 3（可選）：最終校對 ──────────────────────────────────
+def final_check(client: anthropic.Anthropic, content: dict) -> dict:
+    """輕量校對：只抓最明顯的 AI 痕跡，不大幅改寫。"""
 
     caption = content.get("caption", "")
 
     message = client.messages.create(
         model="claude-haiku-4-5-20251001",
         max_tokens=1500,
-        system="""你是文案校對，負責找出並修正 IG 貼文裡的特定問題。只改有問題的地方，其他句子不動，語意保持不變。
+        system="""你是文案校對。這篇文案已經寫得差不多了，你只需要做最後一道輕微修正。
 
-依序檢查並修正以下六項：
+只改以下 3 種情況，其他地方完全不動：
+1. 「版型給得」→「版型打得」（台灣用語）
+2. 單字詞壓縮（「色」→「顏色」、「鬆」→「寬鬆」、「沉」→「沉穩」）
+3. 如果有句子唸出來不像在跟朋友講話（像在朗讀散文），稍微順一下
 
-1. 破折號（——）→ 改成逗號或句號，視語意決定
-   例：「走到哪都看得到這個方向——Lemaire 在巴黎」→「走到哪都看得到這個方向，Lemaire 在巴黎」
-
-2. 「不是A，是B」「不是A，就是B」「A而是B」「不是A而是B」「比較像A不像B」「還是A只是B」這類否定再肯定句型
-   → 直接說B就好，刪掉前面否定A的部分
-   例：「不是刻意露，是那種剛好透出來的感覺」→「就是那種剛好透出來的感覺」
-
-3. 「在＋單字動詞」（在走、在退、在跟、在管、在撐、在做）
-   → 補完整或換說法
-   例：「慢慢在退」→「慢慢退流行了」；「更多人在做的是」→「更多人選擇的是」
-
-4. 「版型給得」→「版型打得」
-
-5. 「台灣這邊」→「台灣」
-
-6. 說教語氣（例如「穿的人比以前更清楚自己在做什麼選擇」、「別再收著等特殊場合了」）
-   → 刪掉或改成平述句
-
-回傳完整 JSON，只改 caption 欄位，其他欄位原封不動。""",
+不要加東西、不要改結構、不要改語氣方向。改越少越好。
+回傳完整 JSON，只動 caption 欄位。""",
         messages=[{
             "role": "user",
-            "content": f"請校對以下 IG 文案：\n\n{json.dumps(content, ensure_ascii=False, indent=2)}"
+            "content": f"請做最後校對：\n\n{json.dumps(content, ensure_ascii=False, indent=2)}"
         }],
     )
 
     revised = _parse_json(message.content[0].text)
-    # 保留原始非 caption 欄位，只更新 caption
     content["caption"] = revised.get("caption", caption)
     return content
 
@@ -309,12 +381,19 @@ def main():
         print("⚠️  本週未抓到任何文章，流程終止。")
         return
 
-    # 2. Claude 生成文案（兩步驟：生成草稿 → 校對修正）
-    print("\n✍️  步驟 2：呼叫 Claude 生成文案...")
+    # 2. Claude 生成文案（三步驟：3 個切入點 → AI 選最好的＋口語化 → 輕量校對）
+    print("\n✍️  步驟 2a：呼叫 Claude 生成 3 個不同切入點...")
+    drafts_data = generate_three_drafts(articles_summary)
+    for i, d in enumerate(drafts_data.get("drafts", []), 1):
+        print(f"   切入點 {i}：{d.get('angle', '')}")
+
+    print("\n✍️  步驟 2b：AI 選出最自然的版本並口語化改寫...")
+    content = select_and_rewrite(drafts_data)
+    print(f"   選擇了版本 {content.get('selected_version', '?')}：{content.get('reason', '')}")
+
+    print("\n✍️  步驟 2c：最終輕量校對...")
     client = anthropic.Anthropic()
-    content = generate_content(articles_summary)
-    print("   草稿完成，進行校對修正...")
-    content = revise_caption(client, content)
+    content = final_check(client, content)
     print(f"   主題：{content.get('topic', '')}")
     print(f"   文案預覽：{content.get('caption', '')[:100]}...")
 

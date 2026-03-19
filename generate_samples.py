@@ -1,7 +1,7 @@
 """
 generate_samples.py
-快速生成 3 篇風格測試貼文，用於討論和調整文案方向。
-不需要爬蟲，直接用指定的 SS26 趨勢主題測試。
+快速生成測試貼文，用於討論和調整文案方向。
+使用與 main_generate.py 相同的新流程：3 個切入點 → AI 選最好的 → 口語化改寫
 執行方式：python generate_samples.py
 結果存成 sample_posts.txt
 """
@@ -11,7 +11,15 @@ import json
 import anthropic
 from datetime import datetime
 
-# 3 個測試用趨勢主題（可自由替換）
+# 引用 main_generate 裡的共用邏輯
+from main_generate import (
+    PERSONA_PROMPT,
+    STYLE_RULES,
+    _load_file,
+    _parse_json,
+)
+
+# 測試用趨勢主題（可自由替換）
 TREND_TOPICS = [
     "大地色系回歸：米白、焦糖、深棕成為 SS26 主色調，寬鬆版型為主",
     "Quiet Luxury：低調奢華，去掉 logo，用剪裁和面料說話",
@@ -19,124 +27,89 @@ TREND_TOPICS = [
 ]
 
 
-def load_style_guide() -> str:
-    path = os.path.join(os.path.dirname(__file__), "style_guide.txt")
-    if os.path.exists(path):
-        with open(path, "r", encoding="utf-8") as f:
-            return f.read().strip()
-    return ""
+def generate_and_select(client: anthropic.Anthropic, trend: str) -> dict:
+    """對單一趨勢主題執行完整的「3 切入點 → 選稿 → 口語化」流程。"""
 
+    style_guide = _load_file("style_guide.txt")
+    fewshot_examples = _load_file("fewshot_examples.txt")
 
-def _parse_json(raw: str) -> dict:
-    raw = raw.strip()
-    if raw.startswith("```"):
-        raw = raw.split("```")[1]
-        if raw.startswith("json"):
-            raw = raw[4:]
-        raw = raw.strip()
-    return json.loads(raw)
+    fewshot_section = ""
+    if fewshot_examples:
+        fewshot_section = f"\n\n【風格範例——以下是長篇時尚文章，請只分析「語氣、用詞、中英混搭方式」來模仿，不要模仿長度和結構，IG 文案仍要維持 100-150 字短文】\n{fewshot_examples}"
 
+    style_ref = ""
+    if style_guide:
+        style_ref = f"\n\n【參考節奏】以下品牌帳號的短句節奏和中英混搭可以參考（但你是媒體不是品牌）：\n{style_guide}"
 
-# ── Step 1：生成草稿 ──────────────────────────────────────────
-def generate_post(client: anthropic.Anthropic, trend: str, style_guide: str) -> dict:
-    style_section = (
-        f"\n以下是一個品牌帳號的文案，只參考它的短句節奏和中英混搭方式：\n{style_guide}"
-        if style_guide else ""
-    )
-
-    message = client.messages.create(
+    # 第一輪：生成 3 個切入點
+    msg1 = client.messages.create(
         model="claude-sonnet-4-6",
-        max_tokens=1000,
-        system=f"""你是一個台灣時尚趨勢 IG 帳號的文案編輯，定位是時尚媒體，不賣衣服、不推銷產品。
+        max_tokens=3000,
+        system=f"""{PERSONA_PROMPT}
 
-【文案結構】三段，總長約 100-150 字：
-
-第一段（1-2 句）：切入趨勢。每次用不同的方式進入，例如一句英文、一個具體場景描述、或直接說觀察。
-
-第二段（3-5 句）：說明趨勢是什麼、為什麼值得注意。語氣像在跟朋友聊天。要具體，提到品牌名、城市名、秀場名，不要用「歐洲街頭」這種模糊說法。
-
-第三段（1 句）：收尾。可以是一個平淡的觀察、一句陳述、或一個問句，不需要每次都是金句。
-
-【語氣】
-- 中英文混搭，英文約 20-30%，通常在開頭句或關鍵詞
-- 台灣口語，自然平淡，像在跟認識的人說話
-- 短句為主
-- 版型描述用「打得很寬鬆」，台灣說「打版」而不是「給版」
-- 單字詞要補完整：「顏色」不說「色」、「寬鬆」不說「鬆」、「沉穩」不說「沉」、「放鬆/寬鬆」不說「放」（例如「特別放」→「版型特別寬鬆」）
-{style_section}
+{STYLE_RULES}
+{fewshot_section}
+{style_ref}
 
 請以 JSON 格式輸出，只輸出 JSON：
 {{
   "topic": "趨勢主題（10字以內）",
-  "caption": "完整文案（含 hashtag，hashtag 放最後，8-12 個，#台灣時尚 或 #FashionTaiwan 擇一）",
-  "hashtags": ["hashtag1", "hashtag2"]
+  "drafts": [
+    {{"angle": "切入點簡述", "caption": "完整文案含 hashtag"}},
+    {{"angle": "切入點簡述", "caption": "完整文案含 hashtag"}},
+    {{"angle": "切入點簡述", "caption": "完整文案含 hashtag"}}
+  ]
 }}""",
         messages=[{
             "role": "user",
-            "content": f"請根據以下趨勢方向撰寫一篇 IG 文案：\n\n{trend}"
+            "content": f"請從 3 個完全不同的切入角度，各寫一篇 IG 文案：\n\n{trend}"
         }]
     )
+    drafts_data = _parse_json(msg1.content[0].text)
 
-    return _parse_json(message.content[0].text)
+    # 第二輪：AI 選最好的 + 口語化改寫
+    drafts_text = ""
+    for i, d in enumerate(drafts_data.get("drafts", []), 1):
+        drafts_text += f"\n【版本 {i}】切入點：{d['angle']}\n{d['caption']}\n"
 
+    msg2 = client.messages.create(
+        model="claude-sonnet-4-6",
+        max_tokens=1500,
+        system=f"""{PERSONA_PROMPT}
 
-# ── Step 2：校對修正 ──────────────────────────────────────────
-def revise_post(client: anthropic.Anthropic, post: dict) -> dict:
-    """針對草稿做定點修正，專門處理最頑固的幾個 AI 句式問題。"""
+從以下 3 個版本中，選出「最不像 AI 寫的、最像真人在 IG 上會發的」，然後把它口語化——想像你在錄語音訊息傳給朋友，重新順一遍。
 
-    caption = post.get("caption", "")
-
-    message = client.messages.create(
-        model="claude-haiku-4-5-20251001",
-        max_tokens=1000,
-        system="""你是文案校對，負責找出並修正 IG 貼文裡的特定問題。只改有問題的地方，其他句子不動，語意保持不變。
-
-依序檢查並修正以下六項：
-
-1. 破折號（——）→ 改成逗號或句號，視語意決定
-   例：「走到哪都看得到這個方向——Lemaire 在巴黎」→「走到哪都看得到這個方向，Lemaire 在巴黎」
-
-2. 「不是A，是B」「不是A，就是B」「A而是B」「不是A而是B」「比較像A不像B」「還是A只是B」這類否定再肯定句型
-   → 直接說B就好，刪掉前面否定A的部分
-   例：「不是刻意露，是那種剛好透出來的感覺」→「就是那種剛好透出來的感覺」
-
-3. 「在＋單字動詞」（在走、在退、在跟、在管、在撐、在做）
-   → 補完整或換說法
-   例：「慢慢在退」→「慢慢退流行了」；「更多人在做的是」→「更多人選擇的是」
-
-4. 「版型給得」→「版型打得」
-
-5. 「台灣這邊」→「台灣」
-
-6. 說教語氣（例如「穿的人比以前更清楚自己在做什麼選擇」、「別再收著等特殊場合了」）
-   → 刪掉或改成平述句
-
-回傳完整 JSON，只改 caption 欄位，其他欄位原封不動。""",
+請以 JSON 格式輸出：
+{{
+  "selected_version": 1,
+  "reason": "一句話說明",
+  "topic": "{drafts_data.get('topic', '')}",
+  "caption": "口語化改寫後的完整文案含 hashtag",
+  "hashtags": ["hashtag 列表"]
+}}""",
         messages=[{
             "role": "user",
-            "content": f"請校對以下 IG 文案：\n\n{json.dumps(post, ensure_ascii=False, indent=2)}"
-        }],
+            "content": f"請選出最好的並口語化改寫：\n{drafts_text}"
+        }]
     )
-
-    revised = _parse_json(message.content[0].text)
-    post["caption"] = revised.get("caption", caption)
-    return post
+    result = _parse_json(msg2.content[0].text)
+    result["all_drafts"] = drafts_data.get("drafts", [])
+    return result
 
 
 def main():
     n = len(TREND_TOPICS)
-    print(f"開始生成 {n} 篇測試貼文...\n")
+    print(f"開始生成 {n} 篇測試貼文（新流程：3 切入點 → AI 選稿 → 口語化）...\n")
     client = anthropic.Anthropic()
-    style_guide = load_style_guide()
     results = []
 
     for i, trend in enumerate(TREND_TOPICS, 1):
-        print(f"  [{i}/{n}] 生成草稿：{trend[:25]}...")
+        print(f"  [{i}/{n}] {trend[:30]}...")
         try:
-            post = generate_post(client, trend, style_guide)
-            print(f"  [{i}/{n}] 校對修正中...")
-            post = revise_post(client, post)
-            results.append((i, trend, post))
+            print(f"         生成 3 個切入點中...")
+            result = generate_and_select(client, trend)
+            print(f"         選擇版本 {result.get('selected_version', '?')}：{result.get('reason', '')}")
+            results.append((i, trend, result))
         except Exception as e:
             print(f"  ⚠️  第 {i} 篇失敗：{e}")
             results.append((i, trend, None))
@@ -144,14 +117,25 @@ def main():
     output_path = os.path.join(os.path.dirname(__file__), "sample_posts.txt")
     with open(output_path, "w", encoding="utf-8") as f:
         f.write(f"IG 文案測試樣本 — 生成時間：{datetime.now().strftime('%Y-%m-%d %H:%M')}\n")
+        f.write(f"流程：3 個切入點 → AI 自動選稿 → 口語化改寫\n")
         f.write("=" * 60 + "\n\n")
 
-        for i, trend, post in results:
-            f.write(f"【第 {i} 篇】{post['topic'] if post else '生成失敗'}\n")
+        for i, trend, result in results:
+            f.write(f"【第 {i} 篇】{result['topic'] if result else '生成失敗'}\n")
             f.write(f"趨勢方向：{trend}\n")
+            if result:
+                f.write(f"AI 選擇：版本 {result.get('selected_version', '?')}（{result.get('reason', '')}）\n")
             f.write("-" * 40 + "\n")
-            if post:
-                f.write(post["caption"])
+
+            if result:
+                # 先列出 3 個草稿供參考
+                for j, d in enumerate(result.get("all_drafts", []), 1):
+                    f.write(f"\n  〈草稿 {j}〉{d.get('angle', '')}\n")
+                    f.write(f"  {d.get('caption', '')[:80]}...\n")
+
+                f.write(f"\n{'─' * 40}\n")
+                f.write(f"✅ 最終版本：\n\n")
+                f.write(result["caption"])
             else:
                 f.write("（生成失敗）")
             f.write("\n\n" + "=" * 60 + "\n\n")
