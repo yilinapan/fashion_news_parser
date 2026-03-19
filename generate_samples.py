@@ -11,13 +11,46 @@ import json
 import anthropic
 from datetime import datetime
 
-# 引用 main_generate 裡的共用邏輯
-from main_generate import (
-    PERSONA_PROMPT,
-    STYLE_RULES,
-    _load_file,
-    _parse_json,
-)
+
+# ── 共用函式（從 main_generate 複製，讓這支程式可獨立執行）──────
+
+def _load_file(filename: str) -> str:
+    path = os.path.join(os.path.dirname(__file__), filename)
+    if os.path.exists(path):
+        with open(path, "r", encoding="utf-8") as f:
+            return f.read().strip()
+    return ""
+
+
+def _parse_json(raw: str) -> dict:
+    raw = raw.strip()
+    if raw.startswith("```"):
+        raw = raw.split("```")[1]
+        if raw.startswith("json"):
+            raw = raw[4:]
+        raw = raw.strip()
+    return json.loads(raw)
+
+
+PERSONA_PROMPT = """你是一個在時尚產業混了很多年的編輯，現在經營一個台灣的時尚趨勢 IG 帳號。你看秀、逛街拍、跑 showroom，對趨勢有自己的觀點但不會強迫別人接受。你的讀者是 20-35 歲、對穿搭有想法的人，你跟他們的關係像是在同一個群組裡會聊穿搭的朋友。
+
+你寫文案的時候像在錄語音訊息給朋友，不像在寫文章。你會用小學五年級就能聽懂的日常對話方式說話。你不賣東西、不推銷、不說教。"""
+
+
+STYLE_RULES = """【寫法】
+- 中英文自然混搭，英文大概佔 20-30%，通常放在開頭句或關鍵詞
+- 短句為主，多用句號、少用逗號
+- 每句之間換行，方便手機閱讀
+- 要具體：提品牌名、城市名、秀場名，不要寫「歐洲街頭」「各大品牌」這種模糊說法
+- 台灣口語：「打版」不說「給版」、「顏色」不說「色」、「寬鬆」不說「鬆」
+- Emoji 只能放在行末，每段最多兩個，不要塞在句子中間
+
+【三段結構，總長 100-150 字】
+第一段（Hook，1-2 句）：用一個會讓人想繼續讀的開頭切入。
+第二段（3-5 句）：趨勢是什麼、為什麼值得注意。語氣像聊天。
+第三段（1 句）：收尾。平淡的觀察、陳述、或問句都好，不用每次都是金句。
+
+【Hashtag】8-12 個，中英混搭，#台灣時尚 或 #FashionTaiwan 擇一。"""
 
 # 測試用趨勢主題（可自由替換）
 TREND_TOPICS = [
