@@ -1,7 +1,7 @@
 """
 generate_samples.py
 快速生成測試貼文，用於討論和調整文案方向。
-使用與 main_generate.py 相同的新流程：3 個切入點 → AI 選最好的 → 口語化改寫
+使用與 main_generate.py 相同的新流程：Sonnet 一次呼叫（想 3 個切入點 → 自動選最好的 → 口語化改寫）
 執行方式：python generate_samples.py
 結果存成 sample_posts.txt
 """
@@ -60,8 +60,10 @@ TREND_TOPICS = [
 ]
 
 
-def generate_and_select(client: anthropic.Anthropic, trend: str) -> dict:
-    """對單一趨勢主題執行完整的「3 切入點 → 選稿 → 口語化」流程。"""
+def generate_and_select_combined(client: anthropic.Anthropic, trend: str) -> dict:
+    """
+    一次 Sonnet 呼叫：想 3 個切入點 → 自動選最好的 → 口語化改寫
+    """
 
     style_guide = _load_file("style_guide.txt")
     fewshot_examples = _load_file("fewshot_examples.txt")
@@ -74,74 +76,64 @@ def generate_and_select(client: anthropic.Anthropic, trend: str) -> dict:
     if style_guide:
         style_ref = f"\n\n【參考節奏】以下品牌帳號的短句節奏和中英混搭可以參考（但你是媒體不是品牌）：\n{style_guide}"
 
-    # 第一輪：生成 3 個切入點
-    msg1 = client.messages.create(
-        model="claude-sonnet-4-6",
-        max_tokens=3000,
-        system=f"""{PERSONA_PROMPT}
+    system_prompt = f"""{PERSONA_PROMPT}
 
 {STYLE_RULES}
 {fewshot_section}
 {style_ref}
 
+你現在要做三件事：
+
+1. 心裡想 3 個完全不同的切入角度（不用寫出來）
+2. 比較這 3 個，選出「最不像 AI 寫的、最像真人在 IG 上會發的」那一個
+3. 把選中的用「錄語音訊息給朋友」的心態，口語化改寫
+
+判斷標準：讀起來像在跟朋友講話、沒有行銷口號感、沒有排比句、沒有刻意的轉折。
+
+具體改寫方式：
+- 破折號（——）改成逗號或句號
+- 「不是 A，是 B」直接說 B
+- 太文學的詞換成日常口語（「色」→「顏色」、「鬆」→「寬鬆」）
+- 刪掉贅字：「其實」「本身」「台灣這邊」→「台灣」
+- 每句之間換行
+- 讀起來像人在打字，不像散文
+
 請以 JSON 格式輸出，只輸出 JSON：
 {{
   "topic": "趨勢主題（10字以內）",
-  "drafts": [
-    {{"angle": "切入點簡述", "caption": "完整文案含 hashtag"}},
-    {{"angle": "切入點簡述", "caption": "完整文案含 hashtag"}},
-    {{"angle": "切入點簡述", "caption": "完整文案含 hashtag"}}
-  ]
-}}""",
-        messages=[{
-            "role": "user",
-            "content": f"請從 3 個完全不同的切入角度，各寫一篇 IG 文案：\n\n{trend}"
-        }]
-    )
-    drafts_data = _parse_json(msg1.content[0].text)
+  "selected_angle": "你選擇的切入角度簡述",
+  "reason": "為什麼選這個（一句話）",
+  "caption": "口語化改寫後的完整文案（含 hashtag）",
+  "hashtags": ["hashtag1", "hashtag2"]
+}}"""
 
-    # 第二輪：AI 選最好的 + 口語化改寫
-    drafts_text = ""
-    for i, d in enumerate(drafts_data.get("drafts", []), 1):
-        drafts_text += f"\n【版本 {i}】切入點：{d['angle']}\n{d['caption']}\n"
-
-    msg2 = client.messages.create(
+    msg = client.messages.create(
         model="claude-sonnet-4-6",
-        max_tokens=1500,
-        system=f"""{PERSONA_PROMPT}
-
-從以下 3 個版本中，選出「最不像 AI 寫的、最像真人在 IG 上會發的」，然後把它口語化——想像你在錄語音訊息傳給朋友，重新順一遍。
-
-請以 JSON 格式輸出：
-{{
-  "selected_version": 1,
-  "reason": "一句話說明",
-  "topic": "{drafts_data.get('topic', '')}",
-  "caption": "口語化改寫後的完整文案含 hashtag",
-  "hashtags": ["hashtag 列表"]
-}}""",
+        max_tokens=2500,
+        system=system_prompt,
         messages=[{
             "role": "user",
-            "content": f"請選出最好的並口語化改寫：\n{drafts_text}"
+            "content": (
+                f"請從 3 個完全不同的切入角度，各想一篇 IG 文案。"
+                f"然後選出最不像 AI 的那一個，口語化改寫。\n\n"
+                f"趨勢方向：{trend}"
+            )
         }]
     )
-    result = _parse_json(msg2.content[0].text)
-    result["all_drafts"] = drafts_data.get("drafts", [])
-    return result
+    return _parse_json(msg.content[0].text)
 
 
 def main():
     n = len(TREND_TOPICS)
-    print(f"開始生成 {n} 篇測試貼文（新流程：3 切入點 → AI 選稿 → 口語化）...\n")
+    print(f"開始生成 {n} 篇測試貼文（流程：想 3 個切入點 → 自動選最好的 → 口語化改寫）...\n")
     client = anthropic.Anthropic()
     results = []
 
     for i, trend in enumerate(TREND_TOPICS, 1):
         print(f"  [{i}/{n}] {trend[:30]}...")
         try:
-            print(f"         生成 3 個切入點中...")
-            result = generate_and_select(client, trend)
-            print(f"         選擇版本 {result.get('selected_version', '?')}：{result.get('reason', '')}")
+            result = generate_and_select_combined(client, trend)
+            print(f"         選擇：{result.get('selected_angle', '')} — {result.get('reason', '')}")
             results.append((i, trend, result))
         except Exception as e:
             print(f"  ⚠️  第 {i} 篇失敗：{e}")
@@ -150,24 +142,18 @@ def main():
     output_path = os.path.join(os.path.dirname(__file__), "sample_posts.txt")
     with open(output_path, "w", encoding="utf-8") as f:
         f.write(f"IG 文案測試樣本 — 生成時間：{datetime.now().strftime('%Y-%m-%d %H:%M')}\n")
-        f.write(f"流程：3 個切入點 → AI 自動選稿 → 口語化改寫\n")
+        f.write(f"流程：Sonnet 一次呼叫（想 3 個切入點 → 自動選最好的 → 口語化改寫）\n")
         f.write("=" * 60 + "\n\n")
 
         for i, trend, result in results:
             f.write(f"【第 {i} 篇】{result['topic'] if result else '生成失敗'}\n")
             f.write(f"趨勢方向：{trend}\n")
             if result:
-                f.write(f"AI 選擇：版本 {result.get('selected_version', '?')}（{result.get('reason', '')}）\n")
+                f.write(f"選擇角度：{result.get('selected_angle', '')} — {result.get('reason', '')}\n")
             f.write("-" * 40 + "\n")
 
             if result:
-                # 先列出 3 個草稿供參考
-                for j, d in enumerate(result.get("all_drafts", []), 1):
-                    f.write(f"\n  〈草稿 {j}〉{d.get('angle', '')}\n")
-                    f.write(f"  {d.get('caption', '')[:80]}...\n")
-
-                f.write(f"\n{'─' * 40}\n")
-                f.write(f"✅ 最終版本：\n\n")
+                f.write(f"\n✅ 最終文案：\n\n")
                 f.write(result["caption"])
             else:
                 f.write("（生成失敗）")
