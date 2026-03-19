@@ -75,28 +75,53 @@ def generate_image_gemini(prompt: str) -> bytes:
 
 # ── Step 0-B：上傳圖片到 Google Drive ────────────────────────
 def upload_to_drive(creds: Credentials, image_bytes: bytes, filename: str) -> str:
-    """上傳圖片到 Google Drive，設為公開，回傳公開連結。"""
-    drive = build("drive", "v3", credentials=creds)
-    media = MediaInMemoryUpload(image_bytes, mimetype="image/png")
+    """上傳圖片到 Google Drive，設為公開，回傳公開連結。
 
-    file_metadata = {"name": filename}
-    if DRIVE_FOLDER_ID:
-        file_metadata["parents"] = [DRIVE_FOLDER_ID]
+    如果 Drive 上傳失敗（例如 Service Account 無儲存配額），
+    會自動改用 Imgur 作為備援。
+    """
+    # 先嘗試 Google Drive
+    try:
+        drive = build("drive", "v3", credentials=creds)
+        media = MediaInMemoryUpload(image_bytes, mimetype="image/png")
 
-    file = drive.files().create(
-        body=file_metadata,
-        media_body=media,
-        fields="id"
-    ).execute()
+        file_metadata = {"name": filename}
+        if DRIVE_FOLDER_ID:
+            file_metadata["parents"] = [DRIVE_FOLDER_ID]
 
-    # 設定為公開可存取（Buffer 需要公開 URL）
-    drive.permissions().create(
-        fileId=file["id"],
-        body={"type": "anyone", "role": "reader"}
-    ).execute()
+        file = drive.files().create(
+            body=file_metadata,
+            media_body=media,
+            fields="id",
+            supportsAllDrives=True,
+        ).execute()
 
-    image_url = f"https://drive.google.com/uc?id={file['id']}"
-    print(f"   圖片已上傳：{image_url}")
+        # 設定為公開可存取
+        drive.permissions().create(
+            fileId=file["id"],
+            body={"type": "anyone", "role": "reader"},
+            supportsAllDrives=True,
+        ).execute()
+
+        image_url = f"https://lh3.googleusercontent.com/d/{file['id']}"
+        print(f"   圖片已上傳到 Google Drive：{image_url}")
+        return image_url
+
+    except Exception as drive_error:
+        print(f"   Google Drive 上傳失敗：{drive_error}")
+        print("   改用 Imgur 上傳...")
+
+    # 備援：用 Imgur 匿名上傳
+    import base64 as b64
+    resp = requests.post(
+        "https://api.imgur.com/3/image",
+        headers={"Authorization": "Client-ID 546c25a59c58ad7"},
+        data={"image": b64.b64encode(image_bytes).decode(), "type": "base64"},
+        timeout=30,
+    )
+    resp.raise_for_status()
+    image_url = resp.json()["data"]["link"]
+    print(f"   圖片已上傳到 Imgur：{image_url}")
     return image_url
 
 
