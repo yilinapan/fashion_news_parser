@@ -105,8 +105,17 @@ def publish_to_buffer(caption: str, image_url: str, scheduled_time: str) -> dict
 
     # 有指定排程時間就用 customScheduled 模式
     if scheduled_time:
+        # Buffer 要求 ISO 8601 格式，例如 "2026-03-23T12:00:00.000Z"
+        dt_str = scheduled_time.strip()
+        if dt_str and "T" not in dt_str:
+            # 把 "2026-03-23 12:00" 轉成 "2026-03-23T12:00:00.000Z"
+            parts = dt_str.split(" ")
+            if len(parts) == 2:
+                dt_str = f"{parts[0]}T{parts[1]}:00.000Z"
+            elif len(parts) == 1:
+                dt_str = f"{parts[0]}T12:00:00.000Z"
         variables["input"]["mode"] = "customScheduled"
-        variables["input"]["dueAt"] = scheduled_time
+        variables["input"]["dueAt"] = dt_str
 
     resp = requests.post(
         BUFFER_GRAPHQL_URL,
