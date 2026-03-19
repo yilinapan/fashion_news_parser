@@ -1,13 +1,13 @@
-name: Weekly Content Generation
+name: Check Approved & Publish
 
 on:
   schedule:
-    # 每週一 UTC 01:00 = 台灣時間 09:00
-    - cron: '0 1 * * 1'
+    # 每小時整點檢查一次
+    - cron: '0 * * * *'
   workflow_dispatch:  # 也可以在 GitHub 頁面手動觸發
 
 jobs:
-  generate:
+  publish:
     runs-on: ubuntu-latest
 
     steps:
@@ -22,13 +22,13 @@ jobs:
       - name: 安裝套件
         run: pip install -r requirements.txt
 
-      - name: 執行內容生成
-        run: python main_generate.py
+      - name: 檢查並發文
+        run: python main_publish.py
         env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           GOOGLE_SERVICE_ACCOUNT: ${{ secrets.GOOGLE_SERVICE_ACCOUNT }}
+          BUFFER_ACCESS_TOKEN: ${{ secrets.BUFFER_ACCESS_TOKEN }}
+          BUFFER_CHANNEL_ID: ${{ secrets.BUFFER_CHANNEL_ID }}
+          BUFFER_ORG_ID: ${{ secrets.BUFFER_ORG_ID }}
           GMAIL_ADDRESS: ${{ secrets.GMAIL_ADDRESS }}
           GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
           SHEET_URL: ${{ secrets.SHEET_URL }}
-          GOOGLE_AI_STUDIO_KEY: ${{ secrets.GOOGLE_AI_STUDIO_KEY }}
-          DRIVE_FOLDER_ID: ${{ secrets.DRIVE_FOLDER_ID }}

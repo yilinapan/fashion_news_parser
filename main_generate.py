@@ -6,13 +6,17 @@ main_generate.py
 
 import os
 import json
+import base64
 import smtplib
 from datetime import datetime, timedelta
 from email.mime.text import MIMEText
 
 import anthropic
 import gspread
+import requests
 from google.oauth2.service_account import Credentials
+from googleapiclient.discovery import build
+from googleapiclient.http import MediaInMemoryUpload
 
 from news_parser import parse_feeds, build_articles_summary
 
@@ -27,10 +31,73 @@ SHEET_NAME = "IG Content Calendar"  # Google Sheet 的名稱
 GMAIL_ADDRESS = os.environ.get("GMAIL_ADDRESS", "")  # 你的 Gmail
 SHEET_URL = os.environ.get("SHEET_URL", "（請填入 Google Sheet 連結）")
 
+# ── Google Drive 設定 ────────────────────────────────────────
+DRIVE_FOLDER_ID = os.environ.get("DRIVE_FOLDER_ID", "")  # 存放 IG 圖片的資料夾 ID
+
 # ── 建立 Google 憑證 ─────────────────────────────────────────
 def get_google_creds() -> Credentials:
     service_account_info = json.loads(os.environ["GOOGLE_SERVICE_ACCOUNT"])
     return Credentials.from_service_account_info(service_account_info, scopes=SCOPES)
+
+
+# ── Step 0-A：Gemini 生成圖片 ────────────────────────────────
+def generate_image_gemini(prompt: str) -> bytes:
+    """呼叫 Gemini 2.5 Flash 生成時尚編輯風格的圖片，回傳圖片的 bytes。"""
+    api_key = os.environ["GOOGLE_AI_STUDIO_KEY"]
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-image:generateContent?key={api_key}"
+    payload = {
+        "contents": [{
+            "parts": [{
+                "text": (
+                    f"Generate a fashion editorial image: {prompt}. "
+                    "Aspect ratio 4:5, 1080x1350px. "
+                    "Minimalist, earth-tone palette, high-end editorial style. "
+                    "No text or watermarks on the image."
+                )
+            }]
+        }],
+        "generationConfig": {
+            "responseModalities": ["IMAGE", "TEXT"]
+        }
+    }
+    resp = requests.post(url, json=payload, timeout=60)
+    resp.raise_for_status()
+
+    # 從回應中找到圖片資料
+    candidates = resp.json().get("candidates", [])
+    for candidate in candidates:
+        for part in candidate.get("content", {}).get("parts", []):
+            if "inlineData" in part:
+                return base64.b64decode(part["inlineData"]["data"])
+
+    raise RuntimeError("Gemini 回應中沒有圖片資料")
+
+
+# ── Step 0-B：上傳圖片到 Google Drive ────────────────────────
+def upload_to_drive(creds: Credentials, image_bytes: bytes, filename: str) -> str:
+    """上傳圖片到 Google Drive，設為公開，回傳公開連結。"""
+    drive = build("drive", "v3", credentials=creds)
+    media = MediaInMemoryUpload(image_bytes, mimetype="image/png")
+
+    file_metadata = {"name": filename}
+    if DRIVE_FOLDER_ID:
+        file_metadata["parents"] = [DRIVE_FOLDER_ID]
+
+    file = drive.files().create(
+        body=file_metadata,
+        media_body=media,
+        fields="id"
+    ).execute()
+
+    # 設定為公開可存取（Buffer 需要公開 URL）
+    drive.permissions().create(
+        fileId=file["id"],
+        body={"type": "anyone", "role": "reader"}
+    ).execute()
+
+    image_url = f"https://drive.google.com/uc?id={file['id']}"
+    print(f"   圖片已上傳：{image_url}")
+    return image_url
 
 
 # ── 共用：解析 JSON helper ────────────────────────────────────
@@ -177,7 +244,7 @@ def write_to_sheet(creds: Credentials, content: dict) -> None:
         datetime.now().strftime("%Y-%m-%d"),   # 日期
         content.get("topic", ""),               # 趨勢主題
         content.get("caption", ""),             # 文案內容
-        "",                                     # 圖片連結（階段二填入）
+        content.get("image_url", ""),              # 圖片連結
         ", ".join(content.get("hashtags", [])), # Hashtags
         scheduled_time,                         # 排程時間
         "pending",                              # 狀態
@@ -232,13 +299,30 @@ def main():
     print(f"   主題：{content.get('topic', '')}")
     print(f"   文案預覽：{content.get('caption', '')[:100]}...")
 
-    # 3. 寫入 Google Sheet
-    print("\n📊 步驟 3：寫入 Google Sheet...")
+    # 3. AI 生成圖片 + 上傳 Google Drive
+    print("\n🎨 步驟 3：AI 生成圖片...")
     creds = get_google_creds()
+    image_prompt = content.get("image_prompt", "")
+    image_url = ""
+    if image_prompt:
+        try:
+            image_bytes = generate_image_gemini(image_prompt)
+            filename = f"ig_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png"
+            print(f"   圖片已生成（{len(image_bytes):,} bytes），上傳到 Google Drive...")
+            image_url = upload_to_drive(creds, image_bytes, filename)
+        except Exception as e:
+            print(f"⚠️  圖片生成或上傳失敗：{e}")
+            print("   將繼續流程，圖片欄位留空。")
+    else:
+        print("⚠️  沒有 image_prompt，跳過圖片生成。")
+    content["image_url"] = image_url
+
+    # 4. 寫入 Google Sheet
+    print("\n📊 步驟 4：寫入 Google Sheet...")
     write_to_sheet(creds, content)
 
-    # 4. Gmail 通知
-    print("\n📧 步驟 4：寄送審核通知...")
+    # 5. Gmail 通知
+    print("\n📧 步驟 5：寄送審核通知...")
     caption_preview = content.get("caption", "")[:200]
     send_notification(
         subject=f"🔔 本週 IG 內容待審核 — {content.get('topic', '')}",
@@ -248,6 +332,7 @@ def main():
         <p><b>趨勢主題：</b>{content.get('topic', '')}</p>
         <p><b>文案預覽：</b><br>{caption_preview}...</p>
         <p><b>AI 繪圖提示詞：</b><br><i>{content.get('image_prompt', '')}</i></p>
+        {f'<p><b>圖片預覽：</b><br><a href="{image_url}">點此查看圖片</a></p>' if image_url else '<p><b>圖片：</b>未生成</p>'}
         <hr>
         <p>👉 <a href="{SHEET_URL}">前往 Google Sheet 審核</a></p>
         <p><small>將「狀態」欄改為 <b>approved</b> 即可排入發文。</small></p>
