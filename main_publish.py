@@ -50,67 +50,79 @@ def send_notification(subject: str, body: str) -> None:
 
 
 # ── Buffer GraphQL API 排程發文 ─────────────────────────────
-BUFFER_GRAPHQL_URL = "https://graph.bufferapp.com/graphql"
+BUFFER_GRAPHQL_URL = "https://api.buffer.com/graphql"
 
 
 def publish_to_buffer(caption: str, image_url: str, scheduled_time: str) -> dict:
-    """透過 Buffer GraphQL API 建立排程貼文，回傳 API 回應。"""
+    """透過 Buffer GraphQL API 建立 IG 排程貼文，回傳 API 回應。"""
     headers = {
         "Authorization": f"Bearer {BUFFER_ACCESS_TOKEN}",
         "Content-Type": "application/json",
     }
 
-    # 準備 media 參數（有圖片才附圖）
-    media_section = ""
-    if image_url:
-        media_section = f', media: {{ photo: "{image_url}" }}'
-
-    # 準備排程參數
-    schedule_section = ""
-    if scheduled_time:
-        schedule_section = f', scheduledAt: "{scheduled_time}"'
-
-    # 用 escaped 的方式處理文案中的特殊字元
-    escaped_caption = caption.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n")
-
-    query = f'''
-    mutation {{
-      createIdea(input: {{
-        organizationId: "{BUFFER_ORG_ID}",
-        content: {{
-          title: "IG Post",
-          text: "{escaped_caption}"
-        }},
-        channels: ["{BUFFER_CHANNEL_ID}"]{media_section}{schedule_section}
-      }}) {{
-        ... on Idea {{
-          id
-          content {{
-            title
+    # 用 variables 方式傳參數，避免特殊字元問題
+    query = """
+    mutation CreatePost($input: CreatePostInput!) {
+      createPost(input: $input) {
+        ... on PostActionSuccess {
+          post {
+            id
+            status
             text
-          }}
-        }}
-        ... on CoreError {{
-          message
-        }}
-      }}
-    }}
-    '''
+            dueAt
+          }
+        }
+        ... on InvalidInputError { message }
+        ... on UnauthorizedError { message }
+        ... on UnexpectedError { message }
+        ... on LimitReachedError { message }
+        ... on RestProxyError { message }
+      }
+    }
+    """
+
+    # 組裝 input 變數
+    variables = {
+        "input": {
+            "channelId": BUFFER_CHANNEL_ID,
+            "text": caption,
+            "schedulingType": "automatic",
+            "mode": "addToQueue",
+            "metadata": {
+                "instagram": {
+                    "type": "post",
+                    "shouldShareToFeed": True,
+                }
+            },
+        }
+    }
+
+    # 有圖片才附圖
+    if image_url:
+        variables["input"]["assets"] = {
+            "images": [{"url": image_url}]
+        }
+
+    # 有指定排程時間就用 customScheduled 模式
+    if scheduled_time:
+        variables["input"]["mode"] = "customScheduled"
+        variables["input"]["dueAt"] = scheduled_time
 
     resp = requests.post(
         BUFFER_GRAPHQL_URL,
         headers=headers,
-        json={"query": query},
+        json={"query": query, "variables": variables},
         timeout=30,
     )
     result = resp.json()
 
-    # 檢查是否有錯誤
+    # 檢查是否有 GraphQL 層級的錯誤
     if "errors" in result:
         error_msgs = [e.get("message", str(e)) for e in result["errors"]]
         raise RuntimeError(f"Buffer API 錯誤：{'; '.join(error_msgs)}")
 
-    data = result.get("data", {}).get("createIdea", {})
+    # 檢查是否有業務邏輯錯誤（非 PostActionSuccess 的回應）
+    data = result.get("data", {}).get("createPost", {})
     if "message" in data:
         raise RuntimeError(f"Buffer API 錯誤：{data['message']}")
 
